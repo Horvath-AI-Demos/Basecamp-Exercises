@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Workshop app
+00_instructions_app/workshop.db
+00_instructions_app/__pycache__/
+00_instructions_app/api/__pycache__/
+
+# Playwright
+.playwright-mcp/
+test-screenshots/
+local-after-login.png
+
+# Dev containers / tooling
+.devcontainer/
+
+# Env / secrets
+.env
+.env.local
+*.env
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
