@@ -2,6 +2,8 @@
 
 A repeatable framework for diagnosing any AI system failure — from a single broken prompt to a fifty-agent pipeline.
 
+*(The prompts below tell you how to apply each step to Meridian yourself; your facilitator will walk through the worked answers at the end of the session.)*
+
 ---
 
 ## Step 1 — Symptom
@@ -9,7 +11,7 @@ A repeatable framework for diagnosing any AI system failure — from a single br
 
 Don't reframe it yet. Don't add your interpretation. Write down exactly what they said is wrong, as they said it.
 
-*In Meridian:* Priya's email — agent gave the wrong answer, didn't escalate, didn't use available data.
+*In Meridian:* before anything else, write Priya's complaint as one plain sentence, in her words — not yours.
 
 ---
 
@@ -26,7 +28,7 @@ Common structural hypotheses:
 - Context not reaching the model that needs it
 - Cache placement breaking shared prompt regions
 
-*In Meridian:* routing (single-dispatch coordinator), opaque tool name (`fetch_customer_v2_databricks`), sub-agent over-claiming.
+*In Meridian:* from the email alone — before opening any file — commit to three hypotheses, from the list above or your own. Write them down; you'll grade them against evidence in Step 3.
 
 ---
 
@@ -38,9 +40,9 @@ For any agentic system, the first three things to ask for:
 2. **Tool descriptions** — what can the model see and when would it use each tool?
 3. **Execution traces** — what actually happened, step by step?
 
-Read each artifact against your hypotheses. Point to the specific line that confirms or rules out each one. "The prompt seems off" is not evidence — "line 14 says pick one category even if two apply" is.
+Read each artifact against your hypotheses. Point to the specific line that confirms or rules out each one. "The prompt seems off" is not evidence — "line 12 tells the agent to retry forever with no timeout" is.
 
-*In Meridian:* coordinator prompt line ("pick the one the customer seems most blocked by"), tool description with no trigger language, trace showing sub-agent claiming resolution without calling any resolution tool.
+*In Meridian:* read the trace first, then the coordinator's prompt and tool list. For each Step-2 hypothesis, find the exact line that confirms or kills it — and quote it. A hypothesis you can't tie to a line isn't confirmed yet.
 
 ---
 
@@ -51,7 +53,7 @@ Not "improve the prompt." Scoped: which prompt, which line, what change, and why
 
 If you can't write a recommendation that references the exact artifact and line, go back to Step 3.
 
-*In Meridian:* rewrite classifier to support multi-route dispatch, rename tool with trigger language ("use this when a customer reports rate limiting or usage anomalies"), add verification requirement to sub-agent prompt before reporting resolution.
+*In Meridian:* for each root cause you confirmed, write the fix as: file → line → change → the failure it prevents. Then make the change and rerun the scoreboard. Step 4 isn't done until the rate moves.
 
 ---
 

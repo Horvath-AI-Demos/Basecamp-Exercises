@@ -1,59 +1,137 @@
 # ── Install & Import ──
-%pip install -q anthropic
+# Install dependencies into THIS kernel — safe to re-run; survives locked-down (PEP 668) Pythons.
+import importlib.util, subprocess, sys
+
+def _ensure_packages(requirements):
+    """requirements: list of (import_name, pip_spec). Install only what is missing,
+    into the running interpreter. Tries a normal install, then user-space, then a
+    PEP 668 override (user-space first, system-wide only as a last resort). Every
+    attempt is silent — pip's output is captured, not streamed — so a locked-down
+    Python (Homebrew or Debian, PEP 668) no longer dumps a scary
+    'externally-managed-environment' wall of text when a fallback is what actually
+    succeeds. Only if every strategy fails does it surface the reason, with the
+    venv fix instead of a raw traceback."""
+    missing = [pip for mod, pip in requirements if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return
+    print("Installing " + ", ".join(missing) + " — first run only, please wait…", flush=True)
+    base = [sys.executable, "-m", "pip", "install", "-q"]
+    last = None
+    for extra in ([], ["--user"], ["--user", "--break-system-packages"], ["--break-system-packages"]):
+        last = subprocess.run(base + extra + missing, capture_output=True, text=True)
+        if last.returncode == 0:
+            return
+    pip_said = (last.stderr or last.stdout or "").strip().splitlines() if last else []
+    tail = "\n      ".join(pip_said[-3:]) if pip_said else "(no output from pip)"
+    raise SystemExit(
+        "\n  Couldn't install: " + ", ".join(missing) + "\n"
+        "  This Python is locked down (PEP 668) or offline. Quickest fix is a venv:\n"
+        f"      {sys.executable} -m venv .venv\n"
+        "      source .venv/bin/activate          # Windows: see SETUP.md\n"
+        f"      pip install {' '.join(missing)}\n"
+        "  Then pick the .venv interpreter in VS Code (kernel picker, top-right) and Run All.\n"
+        "  Corporate proxy or PyPI blocked? See SETUP.md in the repo root.\n"
+        f"  (pip said: {tail})\n"
+    )
+
+_ensure_packages([("anthropic", "anthropic")])
+print("✓ Dependencies ready")
 
 import anthropic
 import json
 import time
 import os
-from IPython.display import display, Markdown
 
-# ── API Key Configuration ──
-# Option 1: Colab Secrets (recommended — click the 🔑 icon in the left sidebar)
+# ── Setup — connect to Claude ──
+import os
+
+def _status(ok, msg):
+    """Green/red banner in notebooks; plain text when run as a script."""
+    try:
+        from IPython import get_ipython
+        shell = get_ipython()
+        if shell is None or shell.__class__.__name__ != "ZMQInteractiveShell":
+            raise RuntimeError("not in a notebook kernel - use the plain-text banner")
+        from IPython.display import display, HTML
+        color = "#1a7f37" if ok else "#b42318"
+        bg = "#e6f4ea" if ok else "#fdecea"
+        icon = "✓" if ok else "✗"
+        display(HTML(
+            f'<div style="padding:12px 16px;border-radius:8px;background:{bg};'
+            f'border:1.5px solid {color};color:{color};font-weight:600;'
+            f'font-size:15px;font-family:sans-serif;">{icon} {msg}</div>'
+        ))
+    except Exception:
+        print(("[OK] " if ok else "[!!] ") + msg)
+
+import os, pathlib
+
+# ── API key via .env (gitignored — never committed) ──
+# Your key lives in a .env file. We look for one next to this notebook or in any parent
+# folder, so a single .env at the repo root can serve every exercise (paste once). If none
+# exists yet, we create one from this template — fill it in, save, and re-run the cell.
+_ENV_TEMPLATE = (
+    "# Paste your Anthropic API key after the = (no quotes, no spaces), then save\n"
+    "# and re-run the setup cell. Get a key at https://console.anthropic.com/\n"
+    "# This file is gitignored — your key is never committed.\n"
+    "ANTHROPIC_API_KEY=paste-your-key-here\n"
+)
+
+def _resolve_env_file():
+    """Nearest existing .env walking up from the working dir (so one root .env serves every
+    exercise); if none exists yet, point at the repo root — or this folder if the notebook
+    was opened on its own."""
+    here = pathlib.Path.cwd().resolve()
+    for d in [here, *here.parents]:
+        if (d / ".env").is_file():
+            return d / ".env"
+    root = next((d for d in [here, *here.parents]
+                 if (d / "SETUP.md").exists() or (d / ".git").exists()), here)
+    return root / ".env"
+
+_env_file = _resolve_env_file()
+if not _env_file.exists():
+    _env_file.write_text(_ENV_TEMPLATE)
+    print(f"Created {_env_file.name} in {_env_file.parent} — open it, paste your key after "
+          "ANTHROPIC_API_KEY=, save, then re-run this cell.")
+
+# Tiny .env parser (no python-dotenv dependency). Re-read on every run, so pasting your
+# key and re-running picks it up. A real key in the environment (shell / Claude Code / CI)
+# wins; the placeholder never sticks.
+_file = {}
+for _line in (_env_file.read_text().splitlines() if _env_file.exists() else []):
+    _line = _line.strip()
+    if _line and not _line.startswith("#") and "=" in _line:
+        _k, _v = _line.split("=", 1)
+        _file[_k.strip()] = _v.strip().strip('"').strip("'")
+for _k, _v in _file.items():
+    if _k != "ANTHROPIC_API_KEY":
+        os.environ.setdefault(_k, _v)
+_shell = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+api_key = _shell if _shell.startswith("sk-ant-") else _file.get("ANTHROPIC_API_KEY", "").strip()
+if not api_key.startswith("sk-ant-"):  # empty or the placeholder = no key yet
+    raise SystemExit(
+        f"\n  No API key yet. Open {_env_file}, paste your key after "
+        "ANTHROPIC_API_KEY= (it starts with sk-ant-), save, then run this again."
+    )
+
+import anthropic
+client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=1)
 try:
-    from google.colab import userdata
-    os.environ["ANTHROPIC_API_KEY"] = userdata.get("ANTHROPIC_API_KEY")
-    print("✅ API key loaded from Colab Secrets")
-except Exception:
-    pass
-
-# Option 2: Paste directly (uncomment and replace)
-# os.environ["ANTHROPIC_API_KEY"] = "sk-ant-..."
+    client.messages.create(model="claude-haiku-4-5", max_tokens=1,
+                           messages=[{"role": "user", "content": "ping"}])
+except anthropic.AuthenticationError:
+    _status(False, "That key was rejected. Run this cell again and paste the whole key (it starts with sk-ant-).")
+    raise SystemExit("API key not accepted - re-run this cell and try again.")
+except Exception as exc:
+    _status(False, "Could not reach the Claude API (" + type(exc).__name__ + "). Check your connection, then run this cell again.")
+    raise
+else:
+    os.environ["ANTHROPIC_API_KEY"] = api_key  # later cells (and any !python commands) pick it up from here
+    _status(True, "API key verified - you're connected to Claude.")
 
 client = anthropic.Anthropic(timeout=900.0)  # Longer timeout: needed for max_tokens>21333 with non-streaming calls
 MODEL = "claude-sonnet-4-6"
-
-# ── Pre-flight Check ──
-errors = []
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    errors.append("❌ ANTHROPIC_API_KEY not set. Use Colab Secrets (🔑 sidebar) or paste it above.")
-
-sdk_version = anthropic.__version__
-print(f"SDK version: {sdk_version}")
-
-if not errors:
-    try:
-        test = client.messages.create(
-            model=MODEL, max_tokens=1024,
-            messages=[{"role": "user", "content": "Reply with only: ready"}],
-            thinking={"type": "adaptive"},
-        )
-        text = "".join(b.text for b in test.content if b.type == "text").strip()
-        print(f"✅ Model: {MODEL}")
-        print(f"✅ API connected — test response: {text}")
-    except anthropic.AuthenticationError:
-        errors.append("❌ API key is invalid. Check your key and try again.")
-    except anthropic.BadRequestError as e:
-        errors.append(f"❌ API error: {e}. Your SDK may need updating: %pip install -q --upgrade anthropic")
-    except Exception as e:
-        errors.append(f"❌ Connection error: {e}")
-
-if errors:
-    print("\n⚠️  Setup issues detected:")
-    for err in errors:
-        print(f"   {err}")
-    print("\nFix the issues above and re-run this cell.")
-else:
-    print("\n🚀 Ready to build!")
 
 # ── Sample Ticket Data ──
 
@@ -142,7 +220,7 @@ print(f"   Knowledge base articles: {len(KB_ARTICLES)}")
 # Hint: resolve_ticket.status should be an enum: ["resolved", "escalated", "pending_customer"]
 
 tools = [
-    # Your tool schemas here
+    # ✏️ YOUR TURN: your tool schemas here
 ]
 
 print(f"Defined {len(tools)} tool schemas: {[t['name'] for t in tools]}")
@@ -211,7 +289,8 @@ Professional, empathetic, and solution-oriented. Acknowledge the customer frustr
 
 def run_agent(user_message: str):
     """Run the support ticket agent."""
-    pass  # Your implementation here
+    # ✏️ YOUR TURN: your implementation here
+    pass
 
 
 # Test it!
@@ -262,7 +341,8 @@ def get_structured_result(response) -> dict:
 
 def run_agent_structured(user_message: str) -> dict:
     """Run the agent with structured JSON output."""
-    pass  # Your implementation here
+    # ✏️ YOUR TURN: your implementation here
+    pass
 
 
 # result = run_agent_structured("Resolve ticket TKT-1042")
@@ -280,11 +360,22 @@ def run_agent_structured(user_message: str) -> dict:
 
 def run_agent_thinking(user_message: str, effort: str = "high") -> dict:
     """Run agent with effort-controlled adaptive thinking."""
-    pass  # Your implementation here
+    # ✏️ YOUR TURN: your implementation here
+    pass
+
+def _not_built_yet(fn_name, result):
+    """Build-along guard: the YOUR TURN stubs return None until you implement them."""
+    if result is not None:
+        return False
+    print(f"\n[--] {fn_name}() isn't built yet - that's the exercise, not a bug.")
+    print(f"     Find the '# YOUR TURN' marker inside {fn_name}(), build it, then run this again.")
+    return True
 
 # Run the ambiguous ticket at high effort — observe the thinking traces
 print("=== TKT-1046: Intermittent API Errors (ambiguous) ===\n")
 result = run_agent_thinking("Resolve ticket TKT-1046", effort="high")
+if _not_built_yet("run_agent_thinking", result):
+    raise SystemExit(0)
 print(f"\nResolution:")
 print(json.dumps(result, indent=2))
 
@@ -315,7 +406,8 @@ for effort in ["high", "low"]:
 
 def run_agent_streaming(user_message: str, effort: str = "high") -> dict:
     """Run agent with streaming output."""
-    pass  # Your implementation here
+    # ✏️ YOUR TURN: your implementation here
+    pass
 
 print("Full Agent Demo: Resolving TKT-1045 (account lockout)")
 print("   Streaming + Adaptive Thinking + Tools + Structured Output")
@@ -324,6 +416,8 @@ print("=" * 60)
 start = time.time()
 result = run_agent_streaming("Resolve ticket TKT-1045")
 elapsed = time.time() - start
+if _not_built_yet("run_agent_streaming", result):
+    raise SystemExit(0)
 
 print(f"\n\n{'=' * 60}")
 print(f"Total time: {elapsed:.1f}s")

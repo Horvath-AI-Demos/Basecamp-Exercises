@@ -10,38 +10,27 @@ How to build evals for AI agents: defining test tasks, writing graders, running 
 
 ## How to run
 
-### Option 1 — GitHub Codespaces (no local install needed)
+Work the exercise in the repo — don't copy code out of a chat window. No terminal setup needed: the **Setup — connect to Claude** cell at the top asks for your API key with a hidden prompt and shows a green **"✓ API key verified"** banner once you're connected. (If `ANTHROPIC_API_KEY` is already set in your environment, it's picked up automatically.)
 
-1. Go to the repo on GitHub and click the green **Code** button.
-2. Select the **Codespaces** tab and click **Create codespace on main**.
-3. Wait for the environment to load (takes about a minute).
-4. Open `day2/01_evals/Building_an_Eval.ipynb`.
-5. When prompted to select a kernel, choose **Python 3**.
-6. In the API key cell, paste your key between the quotes.
-7. Run cells with **Shift+Enter** or use **Run All** from the top menu.
+### VS Code / Cursor (recommended)
 
----
+1. **File → Open Folder** and select this folder.
+2. Install the **Python** and **Jupyter** extensions if prompted.
+3. Open [`Building_an_Eval.ipynb`](Building_an_Eval.ipynb) and pick a **Python 3** kernel — run cells with **Shift+Enter** or **Run All**.
+4. Prefer the terminal? Run it straight through: `python3 Building_an_Eval.py`.
 
-### Option 2 — VS Code locally
+### Claude Code (CLI)
 
-1. Open VS Code and go to **File → Open Folder**, select this folder.
-2. Install the **Python** and **Jupyter** extensions if prompted (search "Jupyter" in the Extensions panel).
-3. Open `Building_an_Eval.ipynb` and select your Python environment as the kernel when prompted.
-4. Open a terminal in VS Code (**Terminal → New Terminal**) and set your API key:
-   ```bash
-   export ANTHROPIC_API_KEY=your_key_here
-   ```
-5. Run cells with **Shift+Enter** or click **Run All** at the top of the notebook.
+`cd` into this folder, then run it end to end or pair with Claude Code on the exercise:
 
----
+```bash
+cd day2/01_evals
+python3 Building_an_Eval.py     # run straight through
+claude                          # …or work the exercise with Claude Code as your pair
+```
 
-### Option 3 — Jupyter locally
+### Claude Desktop
 
-1. Install Jupyter if needed: `pip install notebook`
-2. Open a terminal, navigate to this folder, and set your API key:
-   ```bash
-   export ANTHROPIC_API_KEY=your_key_here
-   cd path/to/day2/01_evals
-   jupyter notebook Building_an_Eval.ipynb
-   ```
-3. In the browser tab that opens, run cells with **Shift+Enter** or use **Cell → Run All**.
+Keep it open alongside as your AI pair — ask it to explain a cell, debug an error, or suggest the next change while you edit.
+
+The setup cell verifies your key with a real API call — green banner means you're connected. Never paste a key into a cell.

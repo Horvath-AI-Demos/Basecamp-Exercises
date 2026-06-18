@@ -1,7 +1,127 @@
-!pip install -q anthropic
+# Install dependencies into THIS kernel — safe to re-run; survives locked-down (PEP 668) Pythons.
+import importlib.util, subprocess, sys
+
+def _ensure_packages(requirements):
+    """requirements: list of (import_name, pip_spec). Install only what is missing,
+    into the running interpreter. Tries a normal install, then user-space, then a
+    PEP 668 override (user-space first, system-wide only as a last resort). Every
+    attempt is silent — pip's output is captured, not streamed — so a locked-down
+    Python (Homebrew or Debian, PEP 668) no longer dumps a scary
+    'externally-managed-environment' wall of text when a fallback is what actually
+    succeeds. Only if every strategy fails does it surface the reason, with the
+    venv fix instead of a raw traceback."""
+    missing = [pip for mod, pip in requirements if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return
+    print("Installing " + ", ".join(missing) + " — first run only, please wait…", flush=True)
+    base = [sys.executable, "-m", "pip", "install", "-q"]
+    last = None
+    for extra in ([], ["--user"], ["--user", "--break-system-packages"], ["--break-system-packages"]):
+        last = subprocess.run(base + extra + missing, capture_output=True, text=True)
+        if last.returncode == 0:
+            return
+    pip_said = (last.stderr or last.stdout or "").strip().splitlines() if last else []
+    tail = "\n      ".join(pip_said[-3:]) if pip_said else "(no output from pip)"
+    raise SystemExit(
+        "\n  Couldn't install: " + ", ".join(missing) + "\n"
+        "  This Python is locked down (PEP 668) or offline. Quickest fix is a venv:\n"
+        f"      {sys.executable} -m venv .venv\n"
+        "      source .venv/bin/activate          # Windows: see SETUP.md\n"
+        f"      pip install {' '.join(missing)}\n"
+        "  Then pick the .venv interpreter in VS Code (kernel picker, top-right) and Run All.\n"
+        "  Corporate proxy or PyPI blocked? See SETUP.md in the repo root.\n"
+        f"  (pip said: {tail})\n"
+    )
+
+_ensure_packages([("anthropic", "anthropic")])
+print("✓ Dependencies ready")
 
 import os
-os.environ["ANTHROPIC_API_KEY"] = "sk-ant-... "
+
+def _status(ok, msg):
+    """Green/red banner in notebooks; plain text when run as a script."""
+    try:
+        from IPython import get_ipython
+        shell = get_ipython()
+        if shell is None or shell.__class__.__name__ != "ZMQInteractiveShell":
+            raise RuntimeError("not in a notebook kernel - use the plain-text banner")
+        from IPython.display import display, HTML
+        color = "#1a7f37" if ok else "#b42318"
+        bg = "#e6f4ea" if ok else "#fdecea"
+        icon = "✓" if ok else "✗"
+        display(HTML(
+            f'<div style="padding:12px 16px;border-radius:8px;background:{bg};'
+            f'border:1.5px solid {color};color:{color};font-weight:600;'
+            f'font-size:15px;font-family:sans-serif;">{icon} {msg}</div>'
+        ))
+    except Exception:
+        print(("[OK] " if ok else "[!!] ") + msg)
+
+import os, pathlib
+
+# ── API key via .env (gitignored — never committed) ──
+# Your key lives in a .env file. We look for one next to this notebook or in any parent
+# folder, so a single .env at the repo root can serve every exercise (paste once). If none
+# exists yet, we create one from this template — fill it in, save, and re-run the cell.
+_ENV_TEMPLATE = (
+    "# Paste your Anthropic API key after the = (no quotes, no spaces), then save\n"
+    "# and re-run the setup cell. Get a key at https://console.anthropic.com/\n"
+    "# This file is gitignored — your key is never committed.\n"
+    "ANTHROPIC_API_KEY=paste-your-key-here\n"
+)
+
+def _resolve_env_file():
+    """Nearest existing .env walking up from the working dir (so one root .env serves every
+    exercise); if none exists yet, point at the repo root — or this folder if the notebook
+    was opened on its own."""
+    here = pathlib.Path.cwd().resolve()
+    for d in [here, *here.parents]:
+        if (d / ".env").is_file():
+            return d / ".env"
+    root = next((d for d in [here, *here.parents]
+                 if (d / "SETUP.md").exists() or (d / ".git").exists()), here)
+    return root / ".env"
+
+_env_file = _resolve_env_file()
+if not _env_file.exists():
+    _env_file.write_text(_ENV_TEMPLATE)
+    print(f"Created {_env_file.name} in {_env_file.parent} — open it, paste your key after "
+          "ANTHROPIC_API_KEY=, save, then re-run this cell.")
+
+# Tiny .env parser (no python-dotenv dependency). Re-read on every run, so pasting your
+# key and re-running picks it up. A real key in the environment (shell / Claude Code / CI)
+# wins; the placeholder never sticks.
+_file = {}
+for _line in (_env_file.read_text().splitlines() if _env_file.exists() else []):
+    _line = _line.strip()
+    if _line and not _line.startswith("#") and "=" in _line:
+        _k, _v = _line.split("=", 1)
+        _file[_k.strip()] = _v.strip().strip('"').strip("'")
+for _k, _v in _file.items():
+    if _k != "ANTHROPIC_API_KEY":
+        os.environ.setdefault(_k, _v)
+_shell = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+api_key = _shell if _shell.startswith("sk-ant-") else _file.get("ANTHROPIC_API_KEY", "").strip()
+if not api_key.startswith("sk-ant-"):  # empty or the placeholder = no key yet
+    raise SystemExit(
+        f"\n  No API key yet. Open {_env_file}, paste your key after "
+        "ANTHROPIC_API_KEY= (it starts with sk-ant-), save, then run this again."
+    )
+
+import anthropic
+client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=1)
+try:
+    client.messages.create(model="claude-haiku-4-5", max_tokens=1,
+                           messages=[{"role": "user", "content": "ping"}])
+except anthropic.AuthenticationError:
+    _status(False, "That key was rejected. Run this cell again and paste the whole key (it starts with sk-ant-).")
+    raise SystemExit("API key not accepted - re-run this cell and try again.")
+except Exception as exc:
+    _status(False, "Could not reach the Claude API (" + type(exc).__name__ + "). Check your connection, then run this cell again.")
+    raise
+else:
+    os.environ["ANTHROPIC_API_KEY"] = api_key  # later cells (and any !python commands) pick it up from here
+    _status(True, "API key verified - you're connected to Claude.")
 
 import math
 from anthropic import Anthropic
@@ -9,9 +129,12 @@ from anthropic.types import ToolUseBlock, TextBlock
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-4-5"  # alias — tracks the current snapshot, never 404s on retirement
 SYSTEM_PROMPT = "You are a helpful assistant."
 
+# The harness client: SDK defaults (long timeout, standard retries). The verification
+# client above uses a short 30s timeout / 1 retry — right for a 1-token ping, too
+# twitchy for a full eval run. Re-create it; the key is in the environment now.
 client = Anthropic()
 
 # ── Tool implementations ─────────────────────────────────────────────────────
@@ -35,12 +158,11 @@ def get_product(product: str):
 
 
 def calculate(op: str, input1: float, input2: float):
-    match op:
-        case "+": return input1 + input2
-        case "-": return input1 - input2
-        case "*": return input1 * input2
-        case "/": return input1 / input2
-        case "**": return input1 ** input2
+    if op == "+": return input1 + input2
+    elif op == "-": return input1 - input2
+    elif op == "*": return input1 * input2
+    elif op == "/": return input1 / input2
+    elif op == "**": return input1 ** input2
 
 TOOL_REGISTRY = {
     "get_product": get_product,
@@ -119,7 +241,11 @@ def run_agent(prompt, eval_mode=False, model=None):
         total_output_tokens += response.usage.output_tokens
         messages.append({"role": "assistant", "content": response.content})
 
-        if response.stop_reason == "end_turn":
+        # Break unless Claude asked for a tool. Guarding on "tool_use" (rather than
+        # "end_turn") prevents a looping 400 if the model stops for another reason
+        # (e.g. max_tokens) — we'd otherwise send back an empty tool_results message.
+        # (With server-side tools, also handle stop_reason == "pause_turn".)
+        if response.stop_reason != "tool_use":
             break
 
         tool_calls = [block for block in response.content if isinstance(block, ToolUseBlock)]
@@ -146,7 +272,9 @@ def run_agent(prompt, eval_mode=False, model=None):
 
 print("boutique agent ready.")
 
-while True:
+INTERACTIVE_CHAT = False  # set True to chat with the agent — off by default so "Run All" doesn't block here
+
+while INTERACTIVE_CHAT:
     query = input("\nYou: ")
     if not query.strip() or query.strip().lower() in ("quit", "exit", "q"):
         print("Session ended.")
@@ -278,8 +406,15 @@ def run_single_task(agent_fn, task, model=None):
             grades.append({"type": grader["type"], "check": None, "score": 0.0, "reason": f"Unknown grader: {grader['type']}"})
             continue
         for check in grader.get("checks", []):
-            grade = grader_fn(result, check, context)
-            grades.append({"type": grader["type"], "check": check, "score": grade["score"], "reason": grade["reason"]})
+            # A grader that raises (or returns something malformed) fails this one
+            # task only — without the guard, the exception would re-raise at
+            # f.result() in run_eval and abort the entire run.
+            try:
+                grade = grader_fn(result, check, context)
+                grades.append({"type": grader["type"], "check": check, "score": grade["score"], "reason": grade["reason"]})
+            except Exception as exc:
+                grades.append({"type": grader["type"], "check": check, "score": 0.0,
+                               "reason": f"grader error: {type(exc).__name__}: {exc}"})
 
     passed = all(g["score"] == 1.0 for g in grades) if grades else False
 
@@ -302,7 +437,12 @@ def run_eval(agent_fn, tasks, model=None, num_runs=1, max_workers=5):
     for _ in range(num_runs):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(run_single_task, agent_fn, t, model): t for t in tasks}
-            run_results = [f.result() for f in as_completed(futures)]
+            run_results = []
+            for f in as_completed(futures):
+                r = f.result()
+                run_results.append(r)
+                mark = "PASS" if r["passed"] else ("ERROR" if r.get("error") else "FAIL")
+                print(f"  [{len(run_results)}/{len(tasks)}] {r['task_id']}: {mark}", flush=True)
         task_order = {t["id"]: i for i, t in enumerate(tasks)}
         run_results.sort(key=lambda r: task_order.get(r["task_id"], 999))
         all_runs.append(run_results)
@@ -399,8 +539,10 @@ def inspect_task(results, task_id, run_index=0):
 
 print("Eval framework ready.")
 
+# ✏️ YOUR TURN — write your eval tasks in THIS list.
+# Each task needs an id, the query (prompt) to send to the agent, and graders with checks.
 tasks = [
-    # ── Reference task ─────────────────────────────────────────────────────
+    # ── Reference task (worked example) ─────────────────────────────────────
     {
         "id": "price_jeans",
         "description": "Direct price lookup for jeans",
@@ -411,6 +553,17 @@ tasks = [
             {"type": "tool_use", "checks": [{"tool_name": "get_product", "arguments": {"product": "jeans"}}]},
         ],
     },
+
+    # ── Template: copy this skeleton for each new task ─────────────────────
+    # {
+    #     "id": "short_unique_id",
+    #     "description": "What this task tests",
+    #     "query": "The exact user message to send to the agent",
+    #     "category": "group_name_for_results",
+    #     "graders": [
+    #         {"type": "which_grader_to_use", "checks": ["what to check for"]},
+    #     ],
+    # },
 
     # ── Build tasks for these queries ──────────────────────────────────────
 
@@ -423,6 +576,8 @@ tasks = [
     # 4. "What's 20% off a jacket?"
 
     # 5. "What do you sell?"
+
+    # ✏️ ADD YOUR TASKS BELOW
 
 ]
 
@@ -437,21 +592,44 @@ baseline = run_eval(run_agent, tasks, num_runs=5)
 print_summary(baseline)
 
 # Implement the LLM-as-judge grader
+#
+# We use structured outputs (output_config.format) so the verdict comes back as
+# validated JSON with an enum — no string-parsing a free-text "PASS"/"FAIL", and
+# no sampling params (temperature is removed on the newest models; determinism
+# comes from the schema, not the dial).
+
+JUDGE_SCHEMA = {
+    "type": "json_schema",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "verdict": {"type": "string", "enum": ["PASS", "FAIL"]},
+            "reason": {"type": "string", "description": "One sentence."},
+        },
+        "required": ["verdict", "reason"],
+        "additionalProperties": False,
+    },
+}
+
 
 def grade_llm_judge(result, check, context=None):
     # TODO: Implement this grader
     #
     # Step 1: Build the judge prompt
     #   - Include: context["query"], result["final_text"], and the check criterion
-    #   - Ask the judge to respond with PASS or FAIL on the first line, then a reason
     #
-    # Step 2: Call Claude
-    #   - response = client.messages.create(model="claude-haiku-4-5-20241022", ...)
+    # Step 2: Call Claude with a structured verdict
+    #   - response = client.messages.create(model="claude-haiku-4-5", ...,
+    #         output_config={"format": JUDGE_SCHEMA})
     #
-    # Step 3: Parse the response
-    #   - Check if the first line contains "PASS" or "FAIL"
-    #   - Return {"score": 1.0, "reason": "..."} or {"score": 0.0, "reason": "..."}
-    pass
+    # Step 3: Read the verdict
+    #   - data = json.loads(response.content[0].text)
+    #   - Return {"score": 1.0 if data["verdict"] == "PASS" else 0.0, "reason": data["reason"]}
+    #
+    # Placeholder so an unbuilt judge fails readably instead of crashing the run —
+    # replace it with your implementation:
+    return {"score": 0.0,
+            "reason": "grade_llm_judge isn't implemented yet — build it in the 'Implement the LLM-as-judge grader' cell"}
 
 
 # Register it so the runner can use it
@@ -478,260 +656,3 @@ llm_judge_tasks = [
 # all_tasks = tasks + llm_judge_tasks
 # results = run_eval(run_agent, all_tasks)
 # print_summary(results)
-
-# ── FACILITATOR REFERENCE: Tasks (Part 3) ────────────────────────────────────
-# Reference tasks for all five queries from Part 3, plus one LLM-as-judge task.
-
-reference_tasks = [
-    # ── 1. Direct lookup (given as the worked example) ─────────────────────
-    {
-        "id": "price_jeans",
-        "description": "Direct price lookup for jeans",
-        "query": "How much do jeans cost?",
-        "category": "product_lookup",
-        "graders": [
-            {"type": "response_contains", "checks": ["49.99"]},
-            {"type": "tool_use", "checks": [{"tool_name": "get_product", "arguments": {"product": "jeans"}}]},
-        ],
-    },
-
-    # ── 2. Hyphen edge case ────────────────────────────────────────────────
-    # "t-shirt" is in the catalog as a hyphenated key. The question is whether
-    # the agent passes "t-shirt" (correct) or "tshirt" / "t shirt" (KeyError).
-    # With the bad tool specs, the agent has no way to know the exact format.
-    # The tool_use check with arguments verifies the agent got the key right.
-    {
-        "id": "price_tshirt",
-        "description": "Price lookup with hyphenated product name",
-        "query": "Price of a t-shirt?",
-        "category": "product_lookup",
-        "graders": [
-            {"type": "response_contains", "checks": ["24.99"]},
-            {"type": "tool_use", "checks": [{"tool_name": "get_product", "arguments": {"product": "t-shirt"}}]},
-        ],
-    },
-
-    # ── 3. Synonym / not-in-catalog ────────────────────────────────────────
-    # "shoes" is NOT in the catalog. "sneakers" is (74.99). This task is
-    # designed to FAIL with the unimproved agent. Two valid grading approaches:
-    #
-    # Option A (pre-improvement): Just check the tool was called. The agent
-    #   will get a KeyError, and we verify it at least tried the tool rather
-    #   than hallucinating a price.
-    #
-    # Option B (post-improvement): After improving tool specs to list valid
-    #   products, check the agent suggests "sneakers" as an alternative.
-    #
-    {
-        "id": "price_shoes_synonym",
-        "description": "Synonym query: 'shoes' is not in catalog ('sneakers' is)",
-        "query": "How much for shoes?",
-        "category": "product_lookup",
-        "graders": [
-            {"type": "tool_use", "checks": [{"tool_name": "get_product"}]},
-            {"type": "response_contains", "checks": ["sneakers"]},
-        ],
-    },
-
-    # ── 4. Multi-tool: lookups + calculation ───────────────────────────────
-    # shirt = 29.99, belt = 24.99
-    # 3 * 29.99 = 89.97, 2 * 24.99 = 49.98, total = 139.95
-    #
-    # We check the numeric result AND that tools were used (obviously this can be improved)
-    {
-        "id": "total_shirts_belts",
-        "description": "Multi-item total requiring product lookups + calculation",
-        "query": "3 shirts and 2 belts, what's my total?",
-        "category": "multi_tool",
-        "graders": [
-            {"type": "response_numeric", "checks": [{"value": 139.95, "tolerance": 0.10}]},
-            {"type": "tool_use", "checks": [
-                {"tool_name": "get_product"},
-                {"tool_name": "calculate", "arguments": {"op": "*"}},
-                {"tool_name": "calculate", "arguments": {"op": "+"}},
-            ]},
-        ],
-    },
-
-    # ── 5. Calculation: percentage off ─────────────────────────────────────
-    # jacket = 89.99, 20% off = 89.99 * 0.80 = 71.992
-    #
-    # Agents may interpret "20% off" as either:
-    #   - The discounted price: 71.99 (what most users mean)
-    #   - The discount amount: 18.00
-    # We check for the discounted price. The tolerance handles rounding
-    # differences (71.99 vs 71.992 vs 72.00).
-    {
-        "id": "discount_jacket",
-        "description": "Calculate 20% off a jacket (lookup + percentage math)",
-        "query": "What's 20% off a jacket?",
-        "category": "calculation",
-        "graders": [
-            {"type": "response_numeric", "checks": [{"value": 71.99, "tolerance": 0.10}]},
-            {"type": "tool_use", "checks": [
-                {"tool_name": "get_product"},
-                {"tool_name": "calculate"},
-            ]},
-        ],
-    },
-
-    # ── 6. Open-ended (requires LLM-as-judge) ─────────────────────────────
-    # This can't be graded with deterministic checks. There are many valid
-    # ways to describe the catalog. We use two separate criteria so each
-    # gets its own isolated LLM judge call.
-    {
-        "id": "what_do_you_sell",
-        "description": "Open-ended: agent describes available products",
-        "query": "What do you sell?",
-        "category": "capabilities",
-        "graders": [
-            {"type": "llm_judge", "checks": [
-                "Response describes or lists some of the available products in the catalog",
-                "Response is helpful and relevant to a shopping context (not dismissive or off-topic)",
-            ]},
-        ],
-    },
-]
-
-print(f"Reference tasks loaded: {len(reference_tasks)} tasks")
-for t in reference_tasks:
-    grader_types = [g["type"] for g in t["graders"]]
-    print(f"  {t['id']:25s} [{t['category']}] graders: {grader_types}")
-
-# ── FACILITATOR REFERENCE: LLM-as-Judge Grader (Part 6) ──────────────────────
-
-JUDGE_SYSTEM_PROMPT = """You are an eval grader. You will receive:
-- The original user query
-- An AI agent's response to that query
-- A criterion to evaluate
-
-Judge whether the agent's response meets the criterion. Focus only on the
-specific criterion provided, not on overall response quality.
-
-Respond with exactly one of these on the first line:
-PASS - if the criterion is clearly met
-FAIL - if the criterion is not met or only partially met
-
-Then on the next line, give a brief reason (one sentence)."""
-
-
-def grade_llm_judge(result, check, context=None):
-    query = context["query"] if context else "Unknown query"
-    response_text = result["final_text"]
-
-    judge_prompt = f"""Original query: {query}
-
-Agent's response: {response_text}
-
-Criterion: {check}"""
-
-    try:
-        judge_response = client.messages.create(
-            model="claude-haiku-4-5-20241022",
-            max_tokens=150,
-            temperature=0.0,
-            system=JUDGE_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": judge_prompt}],
-        )
-        judge_text = judge_response.content[0].text.strip()
-        first_line = judge_text.split("\n")[0].strip().upper()
-        reason = judge_text.split("\n", 1)[1].strip() if "\n" in judge_text else judge_text
-
-        if "PASS" in first_line:
-            return {"score": 1.0, "reason": f"LLM judge: {reason}"}
-        elif "FAIL" in first_line:
-            return {"score": 0.0, "reason": f"LLM judge: {reason}"}
-        else:
-            return {"score": 0.0, "reason": f"LLM judge returned unparseable response: {judge_text[:200]}"}
-
-    except Exception as e:
-        return {"score": 0.0, "reason": f"LLM judge error: {e}"}
-
-
-# Register it
-GRADER_REGISTRY["llm_judge"] = grade_llm_judge
-print(f"Graders now available: {list(GRADER_REGISTRY.keys())}")
-
-# ── FACILITATOR REFERENCE: Improved Agent (Part 5) ───────────────────────────
-# These are the three changes that should move the agent from ~50% to ~100% pass rate in this dummy eval.
-# Audience should discover these through eval failures. Show selectively.
-
-# ── Fix 1: Better system prompt ───────────────────────────────────────────────
-SYSTEM_PROMPT = (
-    "You are Boutique, a shopping assistant. You help customers find products, "
-    "check prices, and calculate totals. Always use your tools to look up prices "
-    "rather than guessing. If a product isn't found, suggest similar items from "
-    "the catalog. Never do mental math, always use your calculate tool for any calculations."
-)
-
-# ── Fix 2: Better tool specs ─────────────────────────────────────────────────
-# The original specs just say "get_product" and "product" with no context.
-# Claude has no idea what products exist, what format to use, or what happens
-# on error. These specs fix that.
-
-GET_PRODUCT_SPEC = {
-    "name": "get_product",
-    "description": "Look up the price of a product from the store catalog. Returns the price as a number. Raises a KeyError if the product is not found.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "product": {
-                "type": "string",
-                "description": "Product name, lowercase. Available products: jeans, shirt, dress, jacket, sneakers, hat, socks, hoodie, shorts, t-shirt, sweater, belt",
-            },
-        },
-        "required": ["product"],
-    },
-}
-
-CALCULATE_SPEC = {
-    "name": "calculate",
-    "description": "Perform a math operation on two numbers. Use this for any arithmetic instead of doing mental math.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "op": {
-                "type": "string",
-                "description": "The math operator to apply.",
-                "enum": ["+", "-", "*", "/", "**"],
-            },
-            "input1": {
-                "type": "number",
-                "description": "The first operand.",
-            },
-            "input2": {
-                "type": "number",
-                "description": "The second operand.",
-            },
-        },
-        "required": ["op", "input1", "input2"],
-    },
-}
-
-ALL_TOOL_SPECS = [GET_PRODUCT_SPEC, CALCULATE_SPEC]
-
-# ── Fix 3: Better error handling in tool implementation ───────────────────────
-# The original get_product just does catalog[product], which throws a raw
-# KeyError. This version returns a helpful message instead.
-
-def get_product(product: str):
-    catalog = {
-        "jeans": 49.99, "shirt": 29.99, "dress": 59.99, "jacket": 89.99,
-        "sneakers": 74.99, "hat": 19.99, "socks": 9.99, "hoodie": 44.99,
-        "shorts": 34.99, "t-shirt": 24.99, "sweater": 54.99, "belt": 24.99,
-    }
-    if product in catalog:
-        return catalog[product]
-    available = ", ".join(sorted(catalog.keys()))
-    return f"Product '{product}' not found. Available products: {available}"
-
-TOOL_REGISTRY["get_product"] = get_product
-
-print("Improved agent loaded. Re-run the eval to see the difference.")
-
-# ── Run the full eval with reference tasks ────────────────────────────────────
-# results = run_eval(run_agent, reference_tasks)
-# print_summary(results)
-# save_results(results)
-
-

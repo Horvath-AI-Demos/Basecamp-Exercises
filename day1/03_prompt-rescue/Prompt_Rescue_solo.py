@@ -1,21 +1,131 @@
 # Install the Anthropic SDK
-# !pip install -q anthropic matplotlib  # Jupyter shell magic; runs in the .ipynb cell, commented here so static linters don't flag it
+# Install dependencies into THIS kernel — safe to re-run; survives locked-down (PEP 668) Pythons.
+import importlib.util, subprocess, sys
 
-# API Key Configuration
+def _ensure_packages(requirements):
+    """requirements: list of (import_name, pip_spec). Install only what is missing,
+    into the running interpreter. Tries a normal install, then user-space, then a
+    PEP 668 override (user-space first, system-wide only as a last resort). Every
+    attempt is silent — pip's output is captured, not streamed — so a locked-down
+    Python (Homebrew or Debian, PEP 668) no longer dumps a scary
+    'externally-managed-environment' wall of text when a fallback is what actually
+    succeeds. Only if every strategy fails does it surface the reason, with the
+    venv fix instead of a raw traceback."""
+    missing = [pip for mod, pip in requirements if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return
+    print("Installing " + ", ".join(missing) + " — first run only, please wait…", flush=True)
+    base = [sys.executable, "-m", "pip", "install", "-q"]
+    last = None
+    for extra in ([], ["--user"], ["--user", "--break-system-packages"], ["--break-system-packages"]):
+        last = subprocess.run(base + extra + missing, capture_output=True, text=True)
+        if last.returncode == 0:
+            return
+    pip_said = (last.stderr or last.stdout or "").strip().splitlines() if last else []
+    tail = "\n      ".join(pip_said[-3:]) if pip_said else "(no output from pip)"
+    raise SystemExit(
+        "\n  Couldn't install: " + ", ".join(missing) + "\n"
+        "  This Python is locked down (PEP 668) or offline. Quickest fix is a venv:\n"
+        f"      {sys.executable} -m venv .venv\n"
+        "      source .venv/bin/activate          # Windows: see SETUP.md\n"
+        f"      pip install {' '.join(missing)}\n"
+        "  Then pick the .venv interpreter in VS Code (kernel picker, top-right) and Run All.\n"
+        "  Corporate proxy or PyPI blocked? See SETUP.md in the repo root.\n"
+        f"  (pip said: {tail})\n"
+    )
+
+_ensure_packages([("anthropic", "anthropic"), ("matplotlib", "matplotlib")])
+print("✓ Dependencies ready")
+
+# Setup — connect to Claude
 import os
-ANTHROPIC_API_KEY = ""  # <-- Paste your API key here
-os.environ["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
 
-# Verify connection
-import anthropic
-client = anthropic.Anthropic()
-test = client.messages.create(
-    model="claude-haiku-4-5",
-    max_tokens=50,
-    messages=[{"role": "user", "content": "Say 'Connected!' and nothing else."}]
+def _status(ok, msg):
+    """Green/red banner in notebooks; plain text when run as a script."""
+    try:
+        from IPython import get_ipython
+        shell = get_ipython()
+        if shell is None or shell.__class__.__name__ != "ZMQInteractiveShell":
+            raise RuntimeError("not in a notebook kernel - use the plain-text banner")
+        from IPython.display import display, HTML
+        color = "#1a7f37" if ok else "#b42318"
+        bg = "#e6f4ea" if ok else "#fdecea"
+        icon = "✓" if ok else "✗"
+        display(HTML(
+            f'<div style="padding:12px 16px;border-radius:8px;background:{bg};'
+            f'border:1.5px solid {color};color:{color};font-weight:600;'
+            f'font-size:15px;font-family:sans-serif;">{icon} {msg}</div>'
+        ))
+    except Exception:
+        print(("[OK] " if ok else "[!!] ") + msg)
+
+import os, pathlib
+
+# ── API key via .env (gitignored — never committed) ──
+# Your key lives in a .env file. We look for one next to this notebook or in any parent
+# folder, so a single .env at the repo root can serve every exercise (paste once). If none
+# exists yet, we create one from this template — fill it in, save, and re-run the cell.
+_ENV_TEMPLATE = (
+    "# Paste your Anthropic API key after the = (no quotes, no spaces), then save\n"
+    "# and re-run the setup cell. Get a key at https://console.anthropic.com/\n"
+    "# This file is gitignored — your key is never committed.\n"
+    "ANTHROPIC_API_KEY=paste-your-key-here\n"
 )
-print(f"API Connected: {test.content[0].text}")
 
+def _resolve_env_file():
+    """Nearest existing .env walking up from the working dir (so one root .env serves every
+    exercise); if none exists yet, point at the repo root — or this folder if the notebook
+    was opened on its own."""
+    here = pathlib.Path.cwd().resolve()
+    for d in [here, *here.parents]:
+        if (d / ".env").is_file():
+            return d / ".env"
+    root = next((d for d in [here, *here.parents]
+                 if (d / "SETUP.md").exists() or (d / ".git").exists()), here)
+    return root / ".env"
+
+_env_file = _resolve_env_file()
+if not _env_file.exists():
+    _env_file.write_text(_ENV_TEMPLATE)
+    print(f"Created {_env_file.name} in {_env_file.parent} — open it, paste your key after "
+          "ANTHROPIC_API_KEY=, save, then re-run this cell.")
+
+# Tiny .env parser (no python-dotenv dependency). Re-read on every run, so pasting your
+# key and re-running picks it up. A real key in the environment (shell / Claude Code / CI)
+# wins; the placeholder never sticks.
+_file = {}
+for _line in (_env_file.read_text().splitlines() if _env_file.exists() else []):
+    _line = _line.strip()
+    if _line and not _line.startswith("#") and "=" in _line:
+        _k, _v = _line.split("=", 1)
+        _file[_k.strip()] = _v.strip().strip('"').strip("'")
+for _k, _v in _file.items():
+    if _k != "ANTHROPIC_API_KEY":
+        os.environ.setdefault(_k, _v)
+_shell = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+api_key = _shell if _shell.startswith("sk-ant-") else _file.get("ANTHROPIC_API_KEY", "").strip()
+if not api_key.startswith("sk-ant-"):  # empty or the placeholder = no key yet
+    raise SystemExit(
+        f"\n  No API key yet. Open {_env_file}, paste your key after "
+        "ANTHROPIC_API_KEY= (it starts with sk-ant-), save, then run this again."
+    )
+
+import anthropic
+client = anthropic.Anthropic(api_key=api_key, timeout=30.0, max_retries=1)
+try:
+    client.messages.create(model="claude-haiku-4-5", max_tokens=1,
+                           messages=[{"role": "user", "content": "ping"}])
+except anthropic.AuthenticationError:
+    _status(False, "That key was rejected. Run this cell again and paste the whole key (it starts with sk-ant-).")
+    raise SystemExit("API key not accepted - re-run this cell and try again.")
+except Exception as exc:
+    _status(False, "Could not reach the Claude API (" + type(exc).__name__ + "). Check your connection, then run this cell again.")
+    raise
+else:
+    os.environ["ANTHROPIC_API_KEY"] = api_key  # later cells (and any !python commands) pick it up from here
+    _status(True, "API key verified - you're connected to Claude.")
+
+# ✏️ YOUR TURN: edit this prompt
 # ============================================================
 # YOUR PROMPT -- Edit this to fix the broken prompt!
 # ============================================================
@@ -38,7 +148,7 @@ Rules:
 - Be concise but thorough
 """
 
-print("Broken prompt loaded. Run the eval suite (Cell 7) to see your baseline score.")
+print("Broken prompt loaded. Run the eval suite cell below to see your baseline score.")
 print(f"Prompt length: {len(system_prompt)} characters")
 
 #@title Eval Harness (click to load -- do not edit this cell)
@@ -54,11 +164,31 @@ import base64
 import time
 from datetime import datetime
 import anthropic
-import matplotlib
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from IPython.display import display, HTML
-matplotlib.rcParams['figure.facecolor'] = 'white'
+def _in_notebook():
+    """True only inside a Jupyter kernel (VS Code / JupyterLab) where rich HTML and charts render."""
+    try:
+        from IPython import get_ipython
+        shell = get_ipython()
+        return shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell"
+    except Exception:
+        return False
+
+def _viz():
+    """Charts are notebook furniture - lazy-load matplotlib only when one is drawn."""
+    try:
+        import matplotlib
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[charts skipped] matplotlib isn't installed - python3 -m pip install matplotlib to see them")
+        return None
+    matplotlib.rcParams['figure.facecolor'] = 'white'
+    return plt
+
+def _show_html(html):
+    """Rich scorecards in notebooks; the terminal gets the same numbers as plain text."""
+    if _in_notebook():
+        from IPython.display import display, HTML
+        display(HTML(html))
 
 # ---------------------------------------------------------------------------
 # Embedded eval cases (base64-encoded to discourage casual peeking)
@@ -407,7 +537,8 @@ def run_eval(client, prompts, cases_data, verbose=False):
                 f'{name}: {result["criteria"][name]["reason"]}'
                 for name in failed_criteria
             ]
-            print(f" {status} [{"; ".join(reasons)}]")
+            reason_str = "; ".join(reasons)
+            print(f" {status} [{reason_str}]")
     category_results = {}
     for cat_key, cat_info in categories.items():
         cat_case_ids = cat_info["case_ids"]
@@ -459,7 +590,13 @@ def _display_results(eval_result, label="Current"):
       </div>
     </div>
     '''
-    display(HTML(html))
+    _show_html(html)
+    if not _in_notebook():
+        line = f"[score] {label}: {total_passed}/{total_cases} ({pct}%)"
+        if _baseline_score is not None:
+            line += f"  |  baseline: {_baseline_score}/{_baseline_total}"
+        print(line)
+        return  # charts are notebook-only
 
     cats = eval_result["categories"]
     labels = [cats[k]["label"] for k in cats]
@@ -467,6 +604,9 @@ def _display_results(eval_result, label="Current"):
     totals = [cats[k]["total"] for k in cats]
     failed = [t - p for t, p in zip(totals, passed)]
 
+    plt = _viz()
+    if plt is None:
+        return
     fig, ax = plt.subplots(figsize=(10, 3.5))
     y_pos = range(len(labels))
     ax.barh(y_pos, passed, color='#22c55e', label='Passed', height=0.6)
@@ -571,7 +711,9 @@ def compare_prompts(prompt_a, prompt_b, label_a="Variant A", label_b="Variant B"
       </div>
     </div>
     '''
-    display(HTML(html))
+    _show_html(html)
+    if not _in_notebook():
+        print(f"[compare] {label_a}: {result_a['total_passed']}/{result_a['total_cases']} ({pct_a}%)  vs  {label_b}: {result_b['total_passed']}/{result_b['total_cases']} ({pct_b}%)")
 
     cats_a = result_a["categories"]
     cats_b = result_b["categories"]
@@ -581,22 +723,24 @@ def compare_prompts(prompt_a, prompt_b, label_a="Variant A", label_b="Variant B"
     scores_b = [cats_b[k]["passed"] for k in cat_keys]
     totals = [cats_a[k]["total"] for k in cat_keys]
 
-    fig, ax = plt.subplots(figsize=(10, 4))
-    y = range(len(labels))
-    bar_height = 0.35
-    ax.barh([i - bar_height/2 for i in y], scores_a, bar_height, label=label_a, color='#3b82f6')
-    ax.barh([i + bar_height/2 for i in y], scores_b, bar_height, label=label_b, color='#f97316')
-    ax.set_yticks(list(y))
-    ax.set_yticklabels(labels, fontsize=12)
-    ax.set_xlabel('Cases Passed', fontsize=12)
-    ax.set_title('Category Comparison', fontsize=14, fontweight='bold')
-    ax.legend(loc='lower right')
-    for i, (sa, sb, t) in enumerate(zip(scores_a, scores_b, totals)):
-        ax.text(max(sa, sb) + 0.15, i, f'/{t}', va='center', fontsize=10, color='#6b7280')
-    ax.set_xlim(0, max(totals) + 1.5)
-    ax.invert_yaxis()
-    plt.tight_layout()
-    plt.show()
+    plt = _viz() if _in_notebook() else None
+    if plt is not None:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        y = range(len(labels))
+        bar_height = 0.35
+        ax.barh([i - bar_height/2 for i in y], scores_a, bar_height, label=label_a, color='#3b82f6')
+        ax.barh([i + bar_height/2 for i in y], scores_b, bar_height, label=label_b, color='#f97316')
+        ax.set_yticks(list(y))
+        ax.set_yticklabels(labels, fontsize=12)
+        ax.set_xlabel('Cases Passed', fontsize=12)
+        ax.set_title('Category Comparison', fontsize=14, fontweight='bold')
+        ax.legend(loc='lower right')
+        for i, (sa, sb, t) in enumerate(zip(scores_a, scores_b, totals)):
+            ax.text(max(sa, sb) + 0.15, i, f'/{t}', va='center', fontsize=10, color='#6b7280')
+        ax.set_xlim(0, max(totals) + 1.5)
+        ax.invert_yaxis()
+        plt.tight_layout()
+        plt.show()
 
     rows = ""
     for k in cat_keys:
@@ -615,7 +759,12 @@ def compare_prompts(prompt_a, prompt_b, label_a="Variant A", label_b="Variant B"
     <tbody>{rows}</tbody>
     </table>
     '''
-    display(HTML(table_html))
+    _show_html(table_html)
+    if not _in_notebook():
+        for k in cat_keys:
+            d = cats_b[k]["passed"] - cats_a[k]["passed"]
+            sign = "+" if d > 0 else ""
+            print(f"  {cats_a[k]['label']}: {cats_a[k]['passed']} vs {cats_b[k]['passed']} of {cats_a[k]['total']}  ({sign}{d})")
     return result_a, result_b
 
 
@@ -637,9 +786,13 @@ def show_iteration_log():
     <tbody>{rows}</tbody>
     </table>
     '''
-    display(HTML(table_html))
+    _show_html(table_html)
+    if not _in_notebook():
+        for i, entry in enumerate(_iteration_log):
+            print(f"  {i+1}. [{entry['timestamp']}] {entry['label']}: {entry['passed']}/{entry['total']} ({entry['pct']}%)")
 
-    if len(_iteration_log) > 1:
+    plt = _viz() if _in_notebook() else None
+    if plt is not None and len(_iteration_log) > 1:
         fig, ax = plt.subplots(figsize=(10, 4))
         x = range(1, len(_iteration_log) + 1)
         pcts = [e["pct"] for e in _iteration_log]

@@ -22,7 +22,9 @@ local-after-login.png
 
 # Env / secrets
 .env
+key.env
 .env.local
+*.local
 *.env
 
 # macOS
@@ -30,3 +32,6 @@ local-after-login.png
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Exercise-specific outputs
+day1/04_diagnosing-ai-problems/runs.jsonl

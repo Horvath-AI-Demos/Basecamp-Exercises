@@ -1,58 +1,87 @@
-# Diagnosing AI Problems · Session Materials
+# Diagnose, Fix, Brief · The Meridian Pilot
 
-## What you're doing
-You've received an email from Priya, a client whose AI-powered customer support system is misbehaving. Using the agent artifacts in this folder, your job is to diagnose what went wrong — without running any code.
+A client's AI support agent is failing and they think it's the model. Your job is to find what's actually wrong, fix it, and prove the fix with numbers the client can take to their leadership.
 
-## Main learning
-How to read and interpret the components of an agentic system: system prompts, tool definitions, and execution traces. You'll practice the real-world skill of diagnosing AI failures from artifacts alone, the same way you'd approach a client escalation.
+**Read the email first: [`Priya_Email.md`](Priya_Email.md).** Then work the system.
 
-## How to work this session
+## The situation
 
-**Work in pairs or threes** — ideally with someone you don't usually work with. One person on the system prompts, one on the traces, one reconciling hypotheses. You'll cover more ground and catch more than working solo.
+Meridian runs an AI agent that triages support tickets: a coordinator that hands each one to a billing, technical, or account specialist. Three weeks live, it gives confidently wrong answers and closes tickets that aren't actually resolved. You're here to find out whether it's fixable. You can change anything around the model. You can't change the model itself.
 
-Two parts:
+## Before you start
 
-1. **Email only (10 min)** — Read the email. Form three hypotheses. Don't open any other file yet.
-2. **Artifacts (20 min)** — Confirm or re-evaluate each hypothesis with evidence from the files below.
+You'll work this the way you'd work a stalled client system in real life: poke it, watch what it does, form a theory, change one thing, and see if the number moves.
 
-## What's in this folder
+About that number. Every time you run the scoreboard it doesn't run the system once. It runs the same support ticket five times and reports how often the agent actually resolved it. One clean run proves nothing. An agent's choices wobble from run to run, so you read the rate, not any single attempt. That rate, and the cost beside it, is your evaluation: the feedback you use to decide what to change and whether the change worked. Every scoreboard run is also appended to `runs.jsonl` and replayed as a RUN HISTORY block under the scoreboard, so your baseline stays on screen while you work.
+
+Here's what one run looks like:
+
+```
+==================================================================
+  MERIDIAN SCOREBOARD  ·  claude-sonnet-4-6  ·  5 trials/ticket
+==================================================================
+
+  Ticket T-4471   routing: account (x4); account, billing (x1)
+    sso_addressed          5/5  #####
+    billing_resolved       1/5  #....
+    no_false_resolution    1/5  #....
+    no_overclaim           3/5  ###..
+    --> RESOLVED in 1/5 trials
+
+------------------------------------------------------------------
+  RESOLVED  1/5 trials
+  COST      $0.55 total  ·  $0.11/trial
+------------------------------------------------------------------
+```
+
+A run only counts as resolved when every problem the customer raised actually got handled. That's a high bar, and it's deliberate. The four checks underneath are the breakdown: they point you at which part is holding the score down. And `routing` shows the call the coordinator made each time. When you see the same ticket routed different ways across five runs, that wobble is the whole reason one run can't tell you anything. Read the rate.
+
+Heads up on timing: each scoreboard run takes a minute or two, since it's running the ticket five times in a row. Let it finish before you read the result.
+
+The loop: run it, read the rate, go figure out why, change one thing, run it again. Watch the rate.
+
+## How to run
+
+Work the exercise in the repo — open [`Diagnose_Fix_Brief.ipynb`](Diagnose_Fix_Brief.ipynb) in **VS Code / Cursor** (Jupyter extension) and run the cells, or drive it from the terminal / **Claude Code**, with **Claude Desktop** open as your AI pair. Don't copy code out of a chat window.
+
+```bash
+export ANTHROPIC_API_KEY=your_key_here
+python3 Diagnose_Fix_Brief.py --trials 5                          # the baseline
+python3 Diagnose_Fix_Brief.py --trials 5 --model claude-opus-4-8  # is it the model?
+python3 Diagnose_Fix_Brief.py --ticket T-4471                     # watch one run end to end
+python3 Diagnose_Fix_Brief.py --holdout --trials 3                # does your fix hold up?
+```
+
+Pointing **Claude Code** at this folder? It reads `CLAUDE.md` and will work the method with you — surfacing evidence and letting you drive the conclusions.
+
+## The work
+
+**1. The situation.** Read `Priya_Email.md` like it just hit your inbox. She's losing faith in a support agent her team shipped three weeks ago, and the question she keeps getting from above is whether they bet on the wrong model. Give her a straight answer: what's actually wrong, whether it's fixable, and proof she can take upstairs.
+
+**2. Get your baseline.** Run the scoreboard. You'll get a RESOLVED rate and a cost for ticket T-4471. That rate is the pilot Priya's worried about, and it's your starting line. Write it down.
+
+**3. Is it the model?** Priya's theory is that the model isn't good enough. Yours might be too. Test it head-on: run the same eval on a bigger, pricier model. You'll get a new rate and a new cost. Then sit with two questions. Did the bigger model actually resolve the ticket? And what did it cost you to find out? Whatever you take away, you earned it.
+
+**4. Watch it work a ticket.** The rate tells you it's failing. It doesn't tell you how. So watch one run start to finish (`--ticket T-4471`). You'll see every move the coordinator made: what it looked up, which specialist it handed the ticket to, and the reply it sent. Read that against the email. The customer raised more than one thing. How many did the agent take care of, and where did it stop? Not sure what you're seeing? Drop the transcript into Claude: *"Here's a trace from a support agent that closed a ticket the customer says isn't fixed. Walk me through what it did and where it might have gone wrong."* Treat what comes back as a lead to chase, not an answer to trust.
+
+**5. Go into the agents.** Now you've got a theory. Look at the system that produced it. The "agents" aren't code, they're plain files in this folder, and you open them right in the editor. Start with the coordinator, `system-prompt-coordinator.txt`. It decides who handles each ticket, so read how it's told to sort tickets and hand them off. After that, its tool list and the specialists' files are fair game. You're hunting for an instruction, or a setup, that would make the agent behave exactly the way you just watched it behave. Something you could rewrite. Circling? Ask Claude: *"Here are a coordinator's instructions. A ticket with two separate problems only got one handled. What in here could cause that?"*
+
+**6. Change one thing, measure again.** Change it, save the file, run the scoreboard again. Did the rate move? If it didn't budge, your theory was off or half-right, so go back to the trace. If it climbed, you found a real lever. Keep pulling until the agent resolves the ticket cleanly, run after run. Same model the whole way.
+
+**7. Make sure it holds.** It's easy to fix one ticket by accident. Run the held-out tickets (`--holdout`): different customers, different problems. If your fix resolves those too, it's real. If it doesn't, you tuned it to T-4471 and there's more to do.
+
+**8. Write Priya back.** Fill in [`client-brief-template.md`](client-brief-template.md): what was actually breaking it in plain language, what you changed, the proof (the rate before and after, plus the cost), and the answer to the question she'll absolutely ask, *"why not just pay for a better model?"* You ran that test in step 3. You already know.
+
+## The levers you edit
 
 | File | What it is |
 |------|-----------|
-| `Priya_Email.pdf` | The client email describing the problem — start here |
-| `system-prompt-coordinator.txt` | System prompt for the orchestrator agent |
-| `system-prompt-subagent-account.txt` | System prompt for the account subagent |
-| `system-prompt-subagent-billing.txt` | System prompt for the billing subagent |
-| `system-prompt-subagent-technical.txt` | System prompt for the technical subagent |
-| `coordinator-tools.json` | Tool schemas available to the coordinator |
-| `subagent-account-tools.json` | Tool schemas for the account subagent |
-| `subagent-billing-tools.json` | Tool schemas for the billing subagent |
-| `subagent-technical-tools.json` | Tool schemas for the technical subagent |
-| `trace-T-4471-coordinator.json` | Execution trace for the coordinator on ticket T-4471 |
-| `trace-T-4471-subagent-account.json` | Execution trace for the account subagent on T-4471 |
-| `diagnostic-framework.md` | One-page framework card to keep |
+| `system-prompt-coordinator.txt` | The coordinator's instructions: how it classifies and routes |
+| `system-prompt-subagent-*.txt` | Each specialist's instructions |
+| `coordinator-tools.json` | The coordinator's tools |
+| `subagent-*-tools.json` | Each specialist's tools |
 
-## No code to run
-This is a read-and-diagnose exercise. Open the PDF first, then work through the system prompts and traces to identify the root cause.
+You may **not** change the model. The fix lives in the system around it. (Trying a bigger model to *test the theory* is the whole point of step 3. Shipping one as your fix is not.)
 
-## Ask Claude first
-
-Before naming a root cause, paste into Claude and treat the response as a hypothesis to evaluate — not an answer to accept.
-
-**During email-only diagnosis:**
-> "Here's an email from a customer about a failing multi-agent support system. What are the most likely structural root causes? Give me three hypotheses, each with a specific thing to look for in the system artifacts."
-
-**During artifact work:**
-> "Here's a tool description from a coordinator agent: [paste]. Would a model know when to call this tool from this description alone? What's missing?"
-
-Claude is a profiler, not an oracle. Use it to generate hypotheses, then decide if the reasoning holds up.
-
-## Stretch goals
-
-Work through these only after you've identified all three root causes, drafted fixes, and attempted the caching stretch from the presenter slides.
-
-**Stretch 03 — Infographic for Priya**
-Design a visual that explains what went wrong to Priya's non-technical stakeholders. Not a diagnosis document — something her account team could read in 60 seconds. What failed, where in the pipeline, and what the fix addresses.
-
-**Stretch 04 — Observability Dashboard**
-Design a dashboard that would give Priya early warning of these failure modes in the future. What metrics would it track? What would trigger an alert? What would the layout show? Spec it out — no code required.
+---
+*Diagnosing AI Problems · Partner Basecamp · Day 1*

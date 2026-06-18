@@ -10,38 +10,31 @@ How to systematically diagnose and fix a broken prompt. You'll study failure cas
 
 ## How to run
 
-### Option 1 — GitHub Codespaces (no local install needed)
+Work the exercise in the repo — don't copy code out of a chat window. Pick a surface below — the setup cell asks for your API key (hidden input) and verifies the connection, so no terminal needed. Optionally, set the key once so you're never prompted:
 
-1. Go to the repo on GitHub and click the green **Code** button.
-2. Select the **Codespaces** tab and click **Create codespace on main**.
-3. Wait for the environment to load (takes about a minute).
-4. Open `day1/03_prompt-rescue/Prompt_Rescue_solo.ipynb`.
-5. When prompted to select a kernel, choose **Python 3**.
-6. In the API key cell, paste your key between the quotes.
-7. Run cells with **Shift+Enter** or use **Run All** from the top menu.
+```bash
+export ANTHROPIC_API_KEY=your_key_here   # your shell, the VS Code terminal, or a local .env
+```
 
----
+### VS Code / Cursor (recommended)
 
-### Option 2 — VS Code locally
+1. **File → Open Folder** and select this folder.
+2. Install the **Python** and **Jupyter** extensions if prompted.
+3. Open [`Prompt_Rescue_solo.ipynb`](Prompt_Rescue_solo.ipynb) and pick a **Python 3** kernel — run cells with **Shift+Enter** or **Run All**.
+4. Prefer the terminal? Run it straight through: `python3 Prompt_Rescue_solo.py`.
 
-1. Open VS Code and go to **File → Open Folder**, select this folder.
-2. Install the **Python** and **Jupyter** extensions if prompted (search "Jupyter" in the Extensions panel).
-3. Open `Prompt_Rescue_solo.ipynb` and select your Python environment as the kernel when prompted.
-4. Open a terminal in VS Code (**Terminal → New Terminal**) and set your API key:
-   ```bash
-   export ANTHROPIC_API_KEY=your_key_here
-   ```
-5. Run cells with **Shift+Enter** or click **Run All** at the top of the notebook.
+### Claude Code (CLI)
 
----
+`cd` into this folder, then run it end to end or pair with Claude Code on the exercise:
 
-### Option 3 — Jupyter locally
+```bash
+cd day1/03_prompt-rescue
+python3 Prompt_Rescue_solo.py     # run straight through
+claude                            # …or work the exercise with Claude Code as your pair
+```
 
-1. Install Jupyter if needed: `pip install notebook`
-2. Open a terminal, navigate to this folder, and set your API key:
-   ```bash
-   export ANTHROPIC_API_KEY=your_key_here
-   cd path/to/day1/03_prompt-rescue
-   jupyter notebook Prompt_Rescue_solo.ipynb
-   ```
-3. In the browser tab that opens, run cells with **Shift+Enter** or use **Cell → Run All**.
+### Claude Desktop
+
+Keep it open alongside as your AI pair — ask it to explain a cell, debug an error, or suggest the next change while you edit.
+
+The setup cell reads `ANTHROPIC_API_KEY` from your environment (with a hidden-prompt fallback), verifies it with a real API call, and shows a green **✓ API key verified** banner when you're connected — never paste a key into a cell.
